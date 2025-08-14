@@ -1,0 +1,133 @@
+pipeline {
+  agent any
+  options { timestamps(); ansiColor('xterm') }
+
+  environment {
+    SSH_CRED = 'srv-websphere-ssh'
+    DEV_HOST  = 'liberty-dev.example.com'
+    HML_HOST  = 'liberty-hml.example.com'
+    PROD_HOST = 'liberty-prod.example.com'
+
+    REGISTRY  = 'registry.example.com'
+    IMAGE     = 'apps/app-sample-liberty'
+  }
+
+  stages {
+    stage('Checkout'){ steps { checkout scm } }
+    stage('Build WAR'){ steps { sh 'mvn -q -DskipTests clean package' } }
+
+    stage('Deploy DEV (dropins)'){
+      when { branch 'dev' }
+      steps {
+        script {
+          def war = sh(script: "ls target/*.war | head -n1", returnStdout: true).trim()
+          sshagent(credentials: [env.SSH_CRED]) {
+            sh """
+              scp -o StrictHostKeyChecking=no ${war} ${DEV_HOST}:/tmp/app.war
+              ssh -o StrictHostKeyChecking=no ${DEV_HOST} '
+                docker cp /tmp/app.war websphere_liberty:/config/dropins/app.war
+              '
+            """
+            sh """
+              ssh -o StrictHostKeyChecking=no ${DEV_HOST} '
+                for i in {1..30}; do
+                  code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:9080/app/v3/api-docs") || true
+                  [ "$code" = "200" ] && echo OK && exit 0
+                  sleep 2
+                done
+                echo "Health-check falhou (DEV)"; exit 1
+              '
+            """
+          }
+        }
+      }
+    }
+
+    stage('Deploy HML (dropins)'){
+      when { branch 'hml' }
+      steps {
+        script {
+          def war = sh(script: "ls target/*.war | head -n1", returnStdout: true).trim()
+          sshagent(credentials: [env.SSH_CRED]) {
+            sh """
+              scp -o StrictHostKeyChecking=no ${war} ${HML_HOST}:/tmp/app.war
+              ssh -o StrictHostKeyChecking=no ${HML_HOST} '
+                docker cp /tmp/app.war websphere_liberty:/config/dropins/app.war
+              '
+            """
+            sh """
+              ssh -o StrictHostKeyChecking=no ${HML_HOST} '
+                for i in {1..30}; do
+                  code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:9080/app/v3/api-docs") || true
+                  [ "$code" = "200" ] && echo OK && exit 0
+                  sleep 2
+                done
+                echo "Health-check falhou (HML)"; exit 1
+              '
+            """
+          }
+        }
+      }
+    }
+
+    stage('Build & Push Image (PROD)'){
+      when { branch 'prod' }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'docker-registry', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+          sh """
+            echo "${DOCKER_PASS}" | docker login ${REGISTRY} -u "${DOCKER_USER}" --password-stdin
+            docker buildx create --use --name ci || true
+            docker buildx build --platform linux/amd64 -t ${REGISTRY}/${IMAGE}:${env.BUILD_NUMBER} --push .
+          """
+        }
+      }
+    }
+
+    stage('Rollout (PROD)'){
+      when { branch 'prod' }
+      steps {
+        sshagent(credentials: [env.SSH_CRED]) {
+          sh """
+            ssh -o StrictHostKeyChecking=no ${PROD_HOST} '
+              mkdir -p /opt/app-compose
+              cat > /opt/app-compose/docker-compose.yml <<EOF
+              services:
+                websphere:
+                  image: ${REGISTRY}/${IMAGE}:${BUILD_NUMBER}
+                  platform: linux/amd64
+                  container_name: websphere_liberty_app
+                  ports:
+                    - "9080:9080"
+                    - "9443:9443"
+                  restart: unless-stopped
+              EOF
+              cd /opt/app-compose
+              docker compose pull
+              docker compose up -d
+            '
+          """
+        }
+      }
+    }
+
+    stage('Health-check (PROD)'){
+      when { branch 'prod' }
+      steps {
+        sshagent(credentials: [env.SSH_CRED]) {
+          sh """
+            ssh -o StrictHostKeyChecking=no ${PROD_HOST} '
+              for i in {1..30}; do
+                code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:9080/app/v3/api-docs") || true
+                [ "$code" = "200" ] && echo OK && exit 0
+                sleep 2
+              done
+              echo "Health-check falhou (PROD)"; exit 1
+            '
+          """
+        }
+      }
+    }
+  }
+
+  post { always { archiveArtifacts artifacts: 'target/*.war', fingerprint: true } }
+}

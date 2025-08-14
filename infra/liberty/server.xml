@@ -1,0 +1,49 @@
+<server description="Liberty + Admin Center (Jakarta EE 10)">
+
+  <featureManager>
+    <feature>webProfile-10.0</feature>
+    <feature>adminCenter-1.0</feature>
+    <feature>appSecurity-5.0</feature>
+    <feature>transportSecurity-1.0</feature>
+    <feature>localConnector-1.0</feature>
+    <feature>restConnector-2.0</feature>
+    <feature>monitor-1.0</feature>
+    <feature>jdbc-4.3</feature>
+    <feature>jndi-1.0</feature>
+  </featureManager>
+
+  <!-- HTTP/HTTPS com portas variáveis -->
+  <httpEndpoint
+      id="defaultHttpEndpoint"
+      host="*"
+      httpPort="${env.WEB_HTTP_PORT}"
+      httpsPort="${env.WEB_HTTPS_PORT}" />
+
+  <!-- Usuário do Admin Center vindo de variáveis -->
+  <basicRegistry id="basic" realm="AdminRealm">
+    <user name="${env.LIBERTY_ADMIN_USER}" password="${env.LIBERTY_ADMIN_PASSWORD}"/>
+  </basicRegistry>
+  <administrator-role>
+    <user>${env.LIBERTY_ADMIN_USER}</user>
+  </administrator-role>
+
+  <logging consoleLogLevel="INFO" />
+
+  <!-- Driver Db2 (mantém o path fixo montado via volume) -->
+  <library id="db2-lib">
+    <fileset dir="${server.config.dir}/jdbc/db2" includes="db2jcc4.jar"/>
+  </library>
+
+  <!-- DataSource JNDI parametrizado -->
+  <dataSource id="MyDb2DS" jndiName="${env.DB2_JNDI}" statementCacheSize="30">
+    <jdbcDriver libraryRef="db2-lib"/>
+    <properties.db2.jcc
+      serverName="${env.DB2_HOST}"
+      portNumber="${env.DB2_PORT}"
+      databaseName="${env.DB2_NAME}"
+      user="${env.DB2_USER}"
+      password="${env.DB2_PASSWORD}"/>
+  </dataSource>
+
+  <!-- Nenhuma aplicação fixa: faça deploy via Admin Center ou dropins -->
+</server>

@@ -1,0 +1,45 @@
+services:
+  websphere:
+    image: icr.io/appcafe/websphere-liberty:latest
+    platform: linux/amd64
+    container_name: websphere_liberty
+    ports:
+      - "${WEB_HTTP_PORT}:${WEB_HTTP_PORT}"
+      - "${WEB_HTTPS_PORT}:${WEB_HTTPS_PORT}"
+    volumes:
+      - ./liberty/server.xml:/config/server.xml:ro
+      - ./liberty/jdbc/db2:/config/jdbc/db2:ro
+    environment:
+      WEB_HTTP_PORT: ${WEB_HTTP_PORT}
+      WEB_HTTPS_PORT: ${WEB_HTTPS_PORT}
+      LIBERTY_ADMIN_USER: ${LIBERTY_ADMIN_USER}
+      LIBERTY_ADMIN_PASSWORD: ${LIBERTY_ADMIN_PASSWORD}
+      DB2_HOST: ${DB2_HOST}
+      DB2_PORT: ${DB2_PORT}
+      DB2_NAME: ${DB2_NAME}
+      DB2_USER: ${DB2_USER}
+      DB2_PASSWORD: ${DB2_PASSWORD}
+      DB2_JNDI: ${DB2_JNDI}
+    restart: unless-stopped
+
+  db2:
+    image: icr.io/db2_community/db2
+    platform: linux/amd64
+    container_name: db2
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INSTANCE: ${DB2_INSTANCE}
+      DB2INST1_PASSWORD: ${DB2_INSTANCE_PASSWORD}
+      DBNAME: ${DB2_NAME}
+    ports:
+      - "${DB2_PORT}:${DB2_PORT}"
+    volumes:
+      - ./db2-data:/database
+    shm_size: "2gb"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc: 4096
+    restart: unless-stopped
